@@ -1,13 +1,13 @@
-# Mnemonic Checker
+# Mnemonic Checker --> analyzer.cpp
 
 ## Description
 
 This program takes two files:
 
-- Opcode PDF/txt file
-- Assembly program file
+- Opcode details containing PDF/txt file --> opcode.txt
+- Assembly program file --> program.asm
 
-It reads the opcode table from the PDF and checks whether the mnemonics in the assembly program are present in the opcode table.
+It reads the opcode table from the file and checks whether the mnemonics in the assembly program are present in the opcode table.
 
 The checking starts after `main:`.
 
@@ -20,7 +20,7 @@ g++ analyzer.cpp -o analyzer
 ## Run
 
 ```bash
-./analyzer system_2.pdf program.asm
+./analyzer opcode.txt program.asm
 ```
 
 ## Output
