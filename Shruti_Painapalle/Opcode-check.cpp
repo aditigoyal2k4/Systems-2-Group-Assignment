@@ -36,7 +36,7 @@ bool pdfToText(string pdf, string txt) {
 }
 
 struct Opcode {
-    string name, operands;
+    string name, operands, opcode, size;
 };
 
 struct Symbol {
@@ -83,6 +83,31 @@ bool addSymbol(int id, string name, int size, int address,
     return true;
 }
 
+void displayOpcodeTable(const vector<Opcode>& table)
+{
+    cout << "\n================ OPCODE TABLE ================\n";
+
+    cout << left
+         << setw(15) << "Mnemonic"
+         << setw(30) << "Operand Information"
+         << setw(15) << "Opcode"
+         << setw(20) << "Size"
+         << '\n';
+
+    cout << string(80, '-') << '\n';
+
+    for (const auto& op : table)
+    {
+        cout << left
+             << setw(15) << op.name
+             << setw(30) << op.operands
+             << setw(15) << op.opcode
+             << setw(20) << op.size
+             << '\n';
+    }
+
+    cout << string(80, '-') << '\n';
+}
 void displaySymbolTable()
 {
     cout << "\n================ SYMBOL TABLE ================\n";
@@ -100,10 +125,15 @@ void displaySymbolTable()
     for (const auto &s : symbolTable)
     {
         cout << left
-             << setw(15)  << s.id
+             << setw(15) << s.id
              << setw(24) << s.name
-             << setw(19)  << s.size
-             << setw(19) << s.address;
+             << setw(19) << s.size
+             << setw(19) << [&](){
+                    stringstream ss;
+                    ss << "0x" << uppercase << hex
+                        << setw(2) << setfill('0') << s.address;
+                    return ss.str();
+                }();
 
         string valuesText;
 
@@ -133,6 +163,7 @@ void displaySymbolTable()
     }
 
     cout << "==============================================\n";
+    
 }
 
 
@@ -195,6 +226,122 @@ string extractStringValue(string declaration) {
     return result;
 }
 
+int instructionSize(string line)
+{
+    // Remove comments
+    size_t commentPos = line.find(';');
+    if (commentPos != string::npos)
+        line = line.substr(0, commentPos);
+
+    line = trim(line);
+
+    if (line.empty())
+        return 0;
+
+    // Ignore labels
+    if (line.find(':') != string::npos)
+        return 0;
+
+    // Extract mnemonic
+    size_t spacePos = line.find_first_of(" \t");
+
+    string instruction;
+    string operandText;
+
+    if (spacePos == string::npos)
+    {
+        instruction = upper(trim(line));
+        operandText = "";
+    }
+    else
+    {
+        instruction = upper(trim(line.substr(0, spacePos)));
+        operandText = trim(line.substr(spacePos + 1));
+    }
+
+    // Ignore assembler directives
+    if (instruction == "SECTION" ||
+        instruction == "GLOBAL" ||
+        instruction == "EXTERN" ||
+        instruction == "BITS")
+    {
+        return 0;
+    }
+
+    // Split operands
+    string op1 = "";
+    string op2 = "";
+
+    size_t commaPos = operandText.find(',');
+
+    if (commaPos != string::npos)
+    {
+        op1 = upper(trim(operandText.substr(0, commaPos)));
+        op2 = upper(trim(operandText.substr(commaPos + 1)));
+    }
+    else
+    {
+        op1 = upper(trim(operandText));
+    }
+
+    // MOV r32, immediate or label: B8+rd id
+    if (instruction == "MOV")
+    {
+        if (!op1.empty() && op1[0] != '[' &&
+            !op2.empty() && op2[0] != '[')
+        {
+            return 5;
+        }
+
+        // MOV [absolute_address], r32
+        if (!op1.empty() && op1[0] == '[' &&
+            !op2.empty() && op2[0] != '[')
+        {
+            return 5;
+        }
+
+        // Other register/memory MOV forms
+        if (!op1.empty() && !op2.empty())
+            return 2;
+    }
+
+    // ADD r32, [register]
+    if (instruction == "ADD")
+    {
+        if (!op2.empty() && op2[0] == '[')
+            return 2;
+
+        // ADD r32, small immediate
+        if (!op2.empty())
+            return 3;
+    }
+
+    // CMP r32, immediate
+    if (instruction == "CMP")
+    {
+        if (!op2.empty())
+            return 3;
+    }
+
+    // Short relative branches for this test program
+    if (instruction == "LOOP" ||
+        instruction == "JG"   ||
+        instruction == "JNE"  ||
+        instruction == "JE"   ||
+        instruction == "JMP")
+    {
+        return 2;
+    }
+
+    // INT imm8
+    if (instruction == "INT")
+        return 2;
+
+    cerr << "Warning: Instruction size not implemented for: "
+     << line << '\n';
+
+    return -1;
+}
 void buildSymbolTable(string asmFile) {
     ifstream file(asmFile);
 
@@ -204,6 +351,7 @@ void buildSymbolTable(string asmFile) {
     }
     string line;
     string section = "";
+    int textAddress =0;
     int id = 1;
     int dataAddress = 0;
     int bssAddress = 0;
@@ -385,80 +533,51 @@ void buildSymbolTable(string asmFile) {
                 }                
             }
         }
+        else if (section == "TEXT")
+        {
+            string instructionLine = line;
 
-        // Process labels in the TEXT section
-        else if (section == "TEXT") {
+            // Check whether this line contains a label.
             size_t pos = line.find(':');
 
-            if (pos != string::npos) {
+            if (pos != string::npos)
+            {
                 string name = trim(line.substr(0, pos));
 
-                if (!name.empty()) {
-                    int address = 0;  // Temporary; calculate code addresses later.
+                if (!name.empty())
+                {
+                    int address = textAddress;
 
                     if (addSymbol(id, name, 0, address, {}, "",
-                                  "TEXT", "DEFINED")) {
+                                  "TEXT", "DEFINED"))
+                    {
                         id++;
                     }
+                }
+
+                // Handle an instruction appearing after a label on the same line.
+                instructionLine = trim(line.substr(pos + 1));
+            }
+
+            if (!instructionLine.empty())
+            {
+                int size = instructionSize(instructionLine);
+
+                if (size > 0)
+                {
+                    textAddress += size;
+                }
+                else if (size < 0)
+                {
+                    cerr << "Error: Cannot calculate address correctly "
+                         << "after this instruction: "
+                         << instructionLine << '\n';
                 }
             }
         }
     }
 
     file.close();
-}
-vector<Opcode> readOpcodes(string file) {
-    ifstream f(file);
-    vector<Opcode> table;
-    string line;
-
-    vector<string> names = {
-        "MOV","ADD","SUB","AND","OR","XOR","MUL",
-        "CMP","JMP","JNE","CALL","INC","DEC","RET"
-    };
-
-    while (getline(f, line)) {
-        line = trim(line);
-        string u = upper(line);
-
-        for (auto &name : names) {
-            if (u.rfind(name, 0) != 0) continue;
-            if (u.size() > name.size() &&
-                !isspace((unsigned char)u[name.size()])) continue;
-
-            string rest = trim(line.substr(name.size()));
-            stringstream ss(rest);
-            vector<string> t;
-            string x;
-
-            while (ss >> x) t.push_back(x);
-            if (t.size() < 2) continue;
-
-            int op = -1;
-            regex hex("^(0F|[0-9A-F]{2})$", regex::icase);
-
-            for (int i = 0; i < (int)t.size(); i++) {
-                string z = t[i];
-                while (!z.empty() && (z.back() == ',' || z.back() == ':'))
-                    z.pop_back();
-
-                if (regex_match(z, hex) || upper(z) == "B8+RD") {
-                    op = i;
-                    break;
-                }
-            }
-
-            if (op >= 0) {
-                string operands;
-                for (int i = 0; i < op; i++)
-                    operands += (i ? " " : "") + t[i];
-
-                table.push_back({name, trim(operands)});
-                break;
-            }
-        }
-    }
-    return table;
 }
 
 bool exists(const vector<Opcode>& table, string m) {
@@ -467,6 +586,94 @@ bool exists(const vector<Opcode>& table, string m) {
     return false;
 }
 
+vector<Opcode> readOpcodes(string file)
+{
+    ifstream f(file);
+    vector<Opcode> table;
+    string line;
+
+    if (!f.is_open()) {
+        cerr << "Error: Cannot open opcode text file: "
+             << file << '\n';
+        return table;
+    }
+
+    vector<string> names = {
+        "MOV", "ADD", "SUB", "AND", "OR", "XOR", "MUL",
+        "CMP", "JMP", "JNE", "CALL", "INC", "DEC", "RET"
+    };
+
+    regex hexOpcode("^(0F|[0-9A-F]{2})$", regex::icase);
+
+    while (getline(f, line)) {
+        line = trim(line);
+        string u = upper(line);
+
+        for (const auto &name : names) {
+            if (u.rfind(name, 0) != 0)
+                continue;
+
+            if (u.size() > name.size() &&
+                !isspace(static_cast<unsigned char>(u[name.size()])))
+                continue;
+
+            string rest = trim(line.substr(name.size()));
+            stringstream ss(rest);
+
+            vector<string> tokens;
+            string token;
+
+            while (ss >> token)
+                tokens.push_back(token);
+
+            if (tokens.size() < 2)
+                continue;
+
+            int opcodeIndex = -1;
+
+            for (int i = 0; i < static_cast<int>(tokens.size()); i++) {
+                string value = tokens[i];
+
+                while (!value.empty() &&
+                       (value.back() == ',' || value.back() == ':'))
+                    value.pop_back();
+
+                if (regex_match(value, hexOpcode) ||
+                    upper(value) == "B8+RD") {
+                    opcodeIndex = i;
+                    break;
+                }
+            }
+
+            if (opcodeIndex >= 0) {
+                string operandInfo;
+
+                for (int i = 0; i < opcodeIndex; i++) {
+                    if (i > 0)
+                        operandInfo += " ";
+
+                    operandInfo += tokens[i];
+                }
+
+                string opcodeValue = tokens[opcodeIndex];
+                string sizeValue = "Variable";
+
+                if (upper(opcodeValue) == "B8+RD")
+                    sizeValue = "5 bytes (32-bit register + immediate)";
+                else if (regex_match(opcodeValue, regex("^[0-9A-F]{2}$", regex::icase)))
+                    sizeValue = "1+ bytes";
+
+                table.push_back({name,
+                                 trim(operandInfo),
+                                 opcodeValue,
+                                 sizeValue});
+                break;
+            }
+        }
+    }
+
+    return table;
+}
 string mnemonic(string line) {
     line = clean(line);
     if (line.empty()) return "";
@@ -591,6 +798,7 @@ int main(int argc, char* argv[]) {
     }
 
     auto table = readOpcodes(txt);
+    displayOpcodeTable(table);
 
     if (table.empty()) {
         cerr << "Error: No opcode found.\n";
