@@ -1,13 +1,11 @@
-Mnemonic       Opcode
-
-MOV            89
-ADD            01
-SUB            29
-CMP            39
-JMP            E9
-CALL           E8
-RET            C3
-AND            21
-MUL            F7
-INC            40
-DEC            48
+MOV 89 2
+ADD 01 2
+SUB 29 2
+CMP 39 2
+JMP E9 5
+CALL E8 5
+RET C3 1
+AND 21 2
+MUL F7 2
+INC 40 1
+DEC 48 1
